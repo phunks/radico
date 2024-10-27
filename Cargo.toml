@@ -1,0 +1,60 @@
+[package]
+name = "radico"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A command line music player for Internet Radio, written in Rust."
+keywords = ["cli", "radio"]
+categories = ["command-line-utilities"]
+readme = "README.md"
+homepage = "https://github.com/phunks/radico"
+repository = "https://github.com/phunks/radico"
+
+[profile.release]
+debug = false
+strip = "symbols"
+lto = "fat"
+codegen-units = 1
+
+[dependencies]
+anyhow = { version = "1.0" }
+base64 = { version = "0.22" }
+bytes = { version = "1.8" }
+chrono = { version = "0.4" }
+chrono-tz = { version = "0.10" }
+cpal = { version = "0.15", features = ["asio"] }
+fdk-aac = { version = "0.7" }
+futures = { version = "0.3" }
+md5 = { version = "0.7" }
+regex = { version = "1.11" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "rustls-tls", "cookies", "trust-dns", "gzip"] }
+rodio = { version = "0.18" }
+roxmltree = { version = "0.20" }
+tokio = { version = "1.41", features = ["full"] }
+uri = { version = "0.4" }
+url = { version = "2.5" }
+http = { version = "1.1" }
+thiserror = { version = "1.0" }
+serde = { version = "1.0", features = ["derive"] }
+serde-xml-rs = { version = "0.6" }
+inquire = { version = "0.7" }
+crossterm = { version = "0.28" }
+async-channel = { version = "2.3" }
+colored = { version = "2.1" }
+redlux = { version = "0.7" }
+itertools = { version = "0.13" }
+clap = { version = "4.5", features = ["derive"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2.148" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59.0" }
+sysinfo = { version = "0.32.0" }
+
+[patch.crates-io]
+cpal = { git = "https://github.com/RustAudio/cpal.git", branch = "master", commit = "f51589c" }
+redlux = { path = "redlux" }
+
+
+

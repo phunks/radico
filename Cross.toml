@@ -1,0 +1,10 @@
+[target.armv7-unknown-linux-musleabihf]
+dockerfile = "./docker/Dockerfile.armv7-unknown-linux-musleabihf"
+[target.aarch64-unknown-linux-musl]
+dockerfile = "./docker/Dockerfile.aarch64-unknown-linux-musl"
+[target.x86_64-unknown-linux-musl]
+dockerfile = "./docker/Dockerfile.x86_64-unknown-linux-musl"
+[target.armv7-unknown-linux-gnueabihf]
+dockerfile = "./docker/Dockerfile.armv7-unknown-linux-gnueabihf"
+[target.arm-unknown-linux-gnueabihf]
+dockerfile = "./docker/Dockerfile.arm-unknown-linux-gnueabihf"
