@@ -16,6 +16,8 @@ pub enum RadicoError {
     AuthError,
     #[error("Forbidden")]
     Forbidden,
+    #[error("Local time is negative {} ms", .0)]
+    NegativeTime(i64),
     #[error("Quit")]
     Quit,
 }

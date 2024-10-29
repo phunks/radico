@@ -2,7 +2,7 @@
 use crate::errors::RadicoError::*;
 use crate::xml::{CurrentProg, PlaylistUrl, Region, Station};
 use crate::{debug_println, lazy_regex, terminal};
-use anyhow::{anyhow, Context, Error, Result};
+use anyhow::{Context, Error, Result};
 use base64::engine::general_purpose;
 use base64::Engine;
 use chrono::{Local, NaiveDateTime};
@@ -292,20 +292,13 @@ impl Api {
 
         let area_id = &self.current.area_id.to_owned().unwrap();
         println!("{:?}", area_id);
-        let mut stations = self.to_owned().data.region.stations
+        let stations = self.to_owned().data.region.stations
             .into_iter()
             .flat_map(|x| {
                 x.station.into_iter()
-                    .filter(|y| &y.area_id == area_id)
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
-
-        self.data.region.stations.last().unwrap()
-            .station.iter()
-            .filter(|&x| &x.area_id != area_id)
-            .cloned()
-            .for_each(|x| stations.push(x));
 
         self.set_stations(&stations).expect("failed to set station");
         let v = stations.iter().map(|x| x.name.to_owned()).collect::<Vec<_>>();
@@ -381,7 +374,7 @@ impl Api {
         let v = self.to_owned().url.play;
         let w = self.to_owned().param.station;
 
-        let res = self.client
+        let res = match self.client
             .get(format!(
                 "{}{}{}{}&{}={}&{}=b",
                 &playlist.url[0].value,
@@ -391,12 +384,16 @@ impl Api {
                 w[1].to_owned().unwrap()
             ))
             .headers(headers)
-            .send().await?;
+            .send().await {
+            Ok(res) => {res}
+            Err(e) => {return Err(Error::from(e))}
+        };
 
         match res.text().await {
             Ok(list) => {
                 if list == "forbidden" {
-                    terminal::quit(Error::from(Forbidden));
+                    self.url.station = None;
+
                 }
                 self.url.station = list
                     .split("\n")
@@ -411,8 +408,8 @@ impl Api {
     }
 
     pub async fn medialist(&self) -> Result<Vec<String>> {
-        match self.url.station.to_owned() {
-            None => Err(anyhow!(StationError)),
+        match &self.url.station {
+            None => Err(Error::from(Forbidden)),
             Some(url) => {
                 let res = match self.client
                     .get(url).send()

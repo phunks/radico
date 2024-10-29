@@ -1,5 +1,7 @@
 use std::time::Duration;
-use crate::debug_println;
+use anyhow::Error;
+use crate::errors::RadicoError::NegativeTime;
+use crate::terminal;
 
 #[derive(Default)]
 pub struct StateCollector {
@@ -8,6 +10,7 @@ pub struct StateCollector {
 
 impl StateCollector {
     pub fn add(&mut self, a: i64, b: i64) {
+        if b < 0 { terminal::print_wran(Error::from(NegativeTime(b))); }
         self.v.rotate_left(1);
         let l = self.v.len() - 1;
         let _ = std::mem::replace(&mut self.v[l], (a, b));
@@ -20,10 +23,9 @@ impl StateCollector {
 
     pub fn delay(&self) -> Duration {
         let (a, b): (Vec<i64>, Vec<i64>) = self.v.iter().cloned().unzip();
-        debug_println!(">>> {:?} {:?}\r", a, b);
         Duration::from_millis(
             ((a.iter().sum::<i64>() as f64 / 24.8_f64) // 5 sec 31k
-                + (b.iter().sum::<i64>() as f64 / 4_f64) - 5300_f64) as u64, // adjust
+                + (b.iter().sum::<i64>() as f64 / 4_f64) - 5500_f64) as u64, // adjust
         )
     }
 }

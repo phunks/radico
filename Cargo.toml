@@ -1,6 +1,6 @@
 [package]
 name = "radico"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT"
 description = "A command line music player for Internet Radio, written in Rust."
@@ -44,6 +44,7 @@ colored = { version = "2.1" }
 redlux = { version = "0.7" }
 itertools = { version = "0.13" }
 clap = { version = "4.5", features = ["derive"] }
+include_assets = { version = "1.0.0" }
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2.148" }

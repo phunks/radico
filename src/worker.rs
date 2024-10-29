@@ -1,10 +1,10 @@
 use crate::api::Api;
 use crate::args::args_url;
-use crate::errors::RadicoError::{OperationInterrupted, Quit};
+use crate::errors::RadicoError::{Forbidden, OperationInterrupted, Quit};
 use crate::player::Player;
 use crate::sleep::HalfSleep;
 use crate::state::StateCollector;
-use crate::{debug_println, terminal};
+use crate::{debug_println, lazy_regex, terminal};
 use anyhow::{Error, Result};
 use async_channel::{unbounded, Receiver};
 #[allow(unused_imports)]
@@ -19,10 +19,13 @@ use tokio::{
     sync::{Mutex, Notify},
     time::Instant,
 };
+use include_assets::EnumArchive;
 use std::collections::VecDeque;
 use std::default::Default;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
+
+
 
 #[derive(Clone, Default)]
 struct Queue {
@@ -36,6 +39,13 @@ struct Queue {
 struct Playlist {
     url: String,
     buf: Vec<u8>,
+}
+
+#[derive(include_assets::AssetEnum)]
+#[archive(base_path = "assets")]
+enum Asset {
+    #[asset(path = "silent.aac")]
+    SilentAac,
 }
 
 impl PartialEq for Playlist {
@@ -56,6 +66,9 @@ impl Queue {
         api.current_prog().await?;
         let mut last_date = NaiveDateTime::default();
         let stat = Arc::clone(&self.stat);
+
+        let archive = EnumArchive::<Asset>::load();
+        let silent = &archive[Asset::SilentAac].to_vec();
 
         loop {
             if let Ok(res) = srx.try_recv() {
@@ -80,17 +93,36 @@ impl Queue {
             } else {
                 let instant = Instant::now();
 
-                for url in api.medialist().await? {
-                    let stream_date = naive_date_from(&url)?;
+                match api.medialist().await {
+                    Ok(urls) => {
+                        for url in urls {
+                            let stream_date = naive_date_from(&url)?;
 
-                    if last_date < stream_date {
-                        let buf = api.get_aac(&url).await?;
+                            if last_date < stream_date {
+                                let buf = api.get_aac(&url).await?;
+                                debug_println!("#1: add buf {}\r", url);
+                                let p = Playlist { url, buf };
+                                self.que.lock().await.push_back(p);
+                                last_date = stream_date;
+                                notify.notify_one();
+                                self.s2.wake();
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        terminal::print_error(Error::from(Forbidden));
+                        let a = Local::now()
+                            .format("_%Y%m%d_%H%M%S").to_string();
+                        let url = format!("{}{}", "forbidden", a);
                         debug_println!("#1: add buf {}\r", url);
-                        let p = Playlist { url, buf };
+                        let p = Playlist { url, buf: silent.to_vec() };
                         self.que.lock().await.push_back(p);
-                        last_date = stream_date;
+
                         notify.notify_one();
                         self.s2.wake();
+                        _delay = Duration::from_secs(3);
+                        self.s1.set(_delay).sleep().await;
+                        continue;
                     }
                 }
                 _delay = api.duration(stat.lock().await.delay(), instant).await;
@@ -159,14 +191,14 @@ pub async fn main_thread() -> Result<()> {
     let mut hdl = vec![];
     let q = Queue::default();
 
-    let q2 = q.to_owned();
+    let q2 = q.clone();
     hdl.push(tokio::spawn(async move { q2.player(prx).await }));
 
     let (stx, srx) = unbounded::<char>();
-    let q1 = q.to_owned();
+    let q1 = q.clone();
     hdl.push(tokio::spawn(async move { q1.scheduler(srx).await }));
 
-    let q3 = q.to_owned();
+    let q3 = q.clone();
     Arc::clone(&q3.park).notified().await;
     q3.s1.wake();
 
@@ -188,28 +220,27 @@ pub async fn main_thread() -> Result<()> {
                                 'n' | 'p' => {
                                     if stx.try_send(c).is_ok() {
                                         ptx.try_send(c)?;
-                                        wake(&q3);
+                                        wake(&q3).await;
                                     }
                                 },
                                 'i' => {
                                     stx.try_send(c)?;
-                                    wake(&q3);
+                                    wake(&q3).await;
                                 },
                                 '0'..='9' => {
                                     ptx.try_send(c)?;
-                                    wake(&q3);
+                                    wake(&q3).await;
                                 },
                                 'Q' => {
                                     if stx.try_send(c).is_ok() {
                                         ptx.try_send(c)?;
-                                        wake(&q3);
+                                        wake(&q3).await;
                                         break;
                                     }
                                     terminal::quit(Error::from(Quit));
                                 },
                                 _ => {},
                             }
-                            wake(&q3);
                         }
                     }
                 }
@@ -222,12 +253,13 @@ pub async fn main_thread() -> Result<()> {
     Ok(())
 }
 
-fn wake(que: &Queue) {
+async fn wake(que: &Queue) {
     que.s1.wake();
     que.s2.wake();
+    tokio::time::sleep(Duration::from_millis(200)).await;
 }
 
-static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r".*(\d{8})_(\d{6}).*").unwrap());
+lazy_regex!(RE: r".*(\d{8})_(\d{6}).*");
 pub(crate) fn naive_date_from(url: &str) -> Result<NaiveDateTime> {
     let date = RE.replace(url, |caps: &Captures| format!("{}{}", &caps[1], &caps[2]));
     let ndt = NaiveDateTime::parse_from_str(&date, "%Y%m%d%H%M%S")?;

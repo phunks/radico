@@ -67,8 +67,13 @@ pub fn asio_kill() {
     }
 }
 
-#[allow(unused)]
 pub fn print_error(error: impl Display) {
     disable_raw_mode().unwrap();
     println!("{} {}", "Error:".bright_red(), error);
 }
+
+pub fn print_wran(error: impl Display) {
+    disable_raw_mode().unwrap();
+    println!("{} {}", "WARN:".bright_yellow(), error);
+}
+
