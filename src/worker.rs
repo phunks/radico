@@ -20,12 +20,12 @@ use tokio::{
     time::Instant,
 };
 use include_assets::EnumArchive;
+use rand::prelude::*;
 use std::collections::VecDeque;
 use std::default::Default;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
-
-
+use rand::distributions::Uniform;
 
 #[derive(Clone, Default)]
 struct Queue {
@@ -44,8 +44,18 @@ struct Playlist {
 #[derive(include_assets::AssetEnum)]
 #[archive(base_path = "assets")]
 enum Asset {
-    #[asset(path = "silent.aac")]
-    SilentAac,
+    #[asset(path = "n001.aac")]
+    N001,
+    #[asset(path = "n002.aac")]
+    N002,
+    #[asset(path = "n003.aac")]
+    N003,
+    #[asset(path = "n004.aac")]
+    N004,
+    #[asset(path = "n005.aac")]
+    N005,
+    #[asset(path = "n006.aac")]
+    N006,
 }
 
 impl PartialEq for Playlist {
@@ -62,13 +72,20 @@ impl Queue {
         let url = args_url().to_owned();
         let mut api = Api::new(url);
         api.init().await?;
-        api.select().await?;
+        api.inquire().await?;
         api.current_prog().await?;
         let mut last_date = NaiveDateTime::default();
         let stat = Arc::clone(&self.stat);
 
         let archive = EnumArchive::<Asset>::load();
-        let silent = &archive[Asset::SilentAac].to_vec();
+        let noise = [
+            &archive[Asset::N001],
+            &archive[Asset::N002],
+            &archive[Asset::N003],
+            &archive[Asset::N004],
+            &archive[Asset::N005],
+            &archive[Asset::N006],
+        ];
 
         loop {
             if let Ok(res) = srx.try_recv() {
@@ -81,7 +98,6 @@ impl Queue {
                             'p' => api.prev_station().await?,
                             _ => {},
                         }
-                        api.current_prog().await?;
                         last_date = NaiveDateTime::default();
                     },
                     'i' => api.current_prog().await?,
@@ -115,12 +131,15 @@ impl Queue {
                             .format("_%Y%m%d_%H%M%S").to_string();
                         let url = format!("{}{}", "forbidden", a);
                         debug_println!("#1: add buf {}\r", url);
-                        let p = Playlist { url, buf: silent.to_vec() };
+
+                        let n = rand();
+                        let p = Playlist { url, buf: Vec::from(noise[n]) };
                         self.que.lock().await.push_back(p);
 
                         notify.notify_one();
                         self.s2.wake();
-                        _delay = Duration::from_secs(3);
+
+                        _delay = Duration::from_secs(30);
                         self.s1.set(_delay).sleep().await;
                         continue;
                     }
@@ -153,7 +172,8 @@ impl Queue {
                         'n' | 'p' => {
                             notify.notified().await;
                             player.buffer_clear();
-                            debug_println!("#2: press n\r");
+                            debug_println!("#2: press {}\r", res);
+                            self.s1.wake();
                         },
                         'Q' => break,
                         _ => {},
@@ -251,6 +271,20 @@ pub async fn main_thread() -> Result<()> {
 
     join_all(hdl).await;
     Ok(())
+}
+
+fn rand() -> usize {
+    let mut rng = thread_rng();
+    let between = Uniform::from(0..=5);
+    between.sample(&mut rng)
+}
+
+#[test]
+fn test_rnd() {
+    for _ in 0..100 {
+        println!("{:?}", rand())
+    }
+
 }
 
 async fn wake(que: &Queue) {

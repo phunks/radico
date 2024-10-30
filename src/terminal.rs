@@ -10,6 +10,8 @@ use crate::debug_println;
 use std::ffi::OsStr;
 #[cfg(windows)]
 use std::io::StdoutLock;
+use anyhow::Error;
+
 
 pub fn init() {
     enable_color_on_windows();
@@ -30,7 +32,7 @@ pub(crate) fn clear_screen() {
     .unwrap();
 }
 
-pub(crate) fn quit(e: anyhow::Error) -> ! {
+pub(crate) fn quit(e: Error) -> ! {
     disable_raw_mode().unwrap();
     execute!(io::stdout(), cursor::Show).unwrap();
     #[cfg(windows)]
@@ -77,3 +79,9 @@ pub fn print_wran(error: impl Display) {
     println!("{} {}", "WARN:".bright_yellow(), error);
 }
 
+pub struct Quit;
+impl Drop for Quit {
+    fn drop(&mut self) {
+        quit(Error::from(crate::errors::RadicoError::Quit));
+    }
+}

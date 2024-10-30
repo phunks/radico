@@ -15,10 +15,13 @@ use itertools::Itertools;
 use regex::Regex;
 use reqwest::{header::{HeaderMap, HeaderValue}, Client};
 use serde_xml_rs::from_str;
+use tokio::time::Instant;
+use unicode_normalization::UnicodeNormalization;
 use std::str::FromStr;
 use std::sync::LazyLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::time::Instant;
+use std::cmp::PartialEq;
+
 
 pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100";
 
@@ -56,7 +59,7 @@ pub struct Param {
 
 #[derive(Clone, Default)]
 pub struct State {
-    station: Option<String>,
+    station: Option<Station>,
     stations: Vec<Station>,
     station_id: Option<String>,
     area_id: Option<String>,
@@ -68,6 +71,12 @@ pub struct State {
 pub struct Kvs {
     pub key: Option<String>,
     pub val: Option<String>,
+}
+
+impl PartialEq<Station> for &Station {
+    fn eq(&self, other: &Station) -> bool {
+        self.name == other.name
+    }
 }
 
 impl Api {
@@ -239,51 +248,54 @@ impl Api {
         Ok(())
     }
 
-    pub async fn select(&mut self) -> Result<()> {
-        match self.inquire().await {
-            Ok(_) => {}
-            Err(e) => return Err(e)
-        }
-        self.login_check().await?;
-        self.playlist_url()
-            .await
-            .context("failed to get playlist")?;
-        self.station_url()
-            .await
-            .context("failed to get station url")?;
-        Ok(())
-    }
+    // pub async fn select(&mut self) -> Result<()> {
+    //     match self.inquire().await {
+    //         Ok(_) => {}
+    //         Err(e) => return Err(e)
+    //     }
+    //     self.login_check().await?;
+    //     self.playlist_url()
+    //         .await
+    //         .context("failed to get playlist")?;
+    //     self.station_url()
+    //         .await
+    //         .context("failed to get station url")?;
+    //     Ok(())
+    // }
 
     pub async fn next_station(&mut self) -> Result<()> {
         let current = self.to_owned().current.station;
         let mut iter = self.to_owned().current.stations.into_iter().cycle();
-        iter.find(|x| x.name == current.to_owned().unwrap())
+        iter.find(|x| x == current.to_owned().unwrap())
             .ok_or(StationError)?;
 
-        let station = iter.next().ok_or(StationError)?;
-        self.set_station(station).await?;
+        self.current.station = Some(iter.next().ok_or(StationError)?);
+        self.set_station().await?;
         Ok(())
     }
 
     pub async fn prev_station(&mut self) -> Result<()> {
         let current = self.to_owned().current.station;
         let mut iter = self.to_owned().current.stations.into_iter().rev().cycle();
-        iter.find(|x| x.name == current.to_owned().unwrap())
+        iter.find(|x| x == current.to_owned().unwrap())
             .ok_or(StationError)?;
 
-        let station = iter.next().ok_or(StationError)?;
-        self.set_station(station).await?;
+        self.current.station = Some(iter.next().ok_or(StationError)?);
+        self.set_station().await?;
         Ok(())
     }
 
-    pub async fn set_station(&mut self, station: Station) -> Result<()> {
-        self.current.station = Some(station.name.to_owned());
+    pub async fn set_station(&mut self) -> Result<()> {
+        // self.current.station = Some(station.name.to_owned());
+        let station = self.current.station.to_owned().unwrap();
         self.current.station_id = Some(station.id.to_owned());
         self.current.area_id = Some(station.area_id.to_owned());
 
         debug_println!("{:?}\r", station);
+
         self.playlist_url().await.expect("failed to get playlist");
         self.station_url().await.expect("failed to get station url");
+        self.current_prog().await?;
         Ok(())
     }
 
@@ -308,18 +320,23 @@ impl Api {
             Err(e) => terminal::quit(Error::from(e))
         };
         self.param.stations = v;
-        let station = stations
+        self.current.station = Some(stations
             .iter()
             .find(|x| x.name == station)
-            .ok_or(InquireError)?;
+            .ok_or(InquireError)?.to_owned());
 
         debug_println!("{:?}\r", station);
 
-        self.current.station = Some(station.name.to_owned());
-        self.current.station_id = Some(station.id.to_owned());
-        self.current.area_id = Some(station.area_id.to_owned());
-
+        // self.current.station = Some(station.name.to_owned());
+        // self.current.station_id = Some(station.id.to_owned());
+        // self.current.area_id = Some(station.area_id.to_owned());
+        self.set_station().await?;
         Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn get_stations(self) -> Vec<String> {
+        self.param.stations.to_owned()
     }
 
     fn set_stations(&mut self, v: &Vec<Station>) -> Result<()> {
@@ -492,7 +509,7 @@ impl Api {
             ))
             .send().await?;
         let body = res.text().await?;
-        let station = &self.to_owned().current.station.unwrap();
+        let station = &self.to_owned().current.station.unwrap().name;
         let current: CurrentProg = from_str(&body)?;
         if let Some(i) = current.stations.station.progs.prog.iter()
             .rev().find(|x| {
@@ -550,8 +567,10 @@ fn sleep(elapsed: Duration) -> Duration {
 }
 
 fn strip_html(source: &str) -> String {
-    let result = REG_CONDENSE.replace_all(source, " ");
+    let result = REG_CONDENSE.replace_all(source, " ")
+        .nfkd().collect::<String>();
     let source = result.replace(r"\n", r"\n\r");
+
     let mut data = String::new();
     let mut inside = false;
 
@@ -630,7 +649,7 @@ impl<'a> QuoteUtil<'a> {
     }
 }
 
-fn render_config() -> RenderConfig<'static> {
+pub(crate) fn render_config() -> RenderConfig<'static> {
     RenderConfig {
         help_message: StyleSheet::new() // help message
             .with_fg(Color::rgb(150, 150, 140)),

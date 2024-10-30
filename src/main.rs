@@ -11,9 +11,7 @@ mod terminal;
 mod worker;
 mod xml;
 
-use crate::errors::RadicoError::Quit;
 use crate::worker::main_thread;
-use anyhow::Error;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 1)]
 async fn main() {
@@ -22,5 +20,5 @@ async fn main() {
     if let Err(e) = main_thread().await {
         terminal::quit(e);
     }
-    terminal::quit(Error::from(Quit));
+    let _exit = terminal::Quit;
 }
