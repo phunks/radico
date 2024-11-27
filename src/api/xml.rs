@@ -27,7 +27,7 @@ pub struct PlaylistUrl {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Urls {
     #[serde(rename = "$value")]
-    pub(crate) value: String,
+    pub value: String,
 }
 
 /// current prog
@@ -46,13 +46,13 @@ pub struct PStation {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Progs {
-    pub(crate) prog: Vec<Prog>,
+    pub prog: Vec<Prog>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Prog {
-    pub(crate) ft: String,
-    pub(crate) to: String,
-    pub(crate) title: String,
-    pub(crate) info: String,
+    pub ft: String,
+    pub to: String,
+    pub title: String,
+    pub info: String,
 }

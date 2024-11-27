@@ -1,8 +1,11 @@
-
+use crate::api::xml::{CurrentProg, PlaylistUrl, Region, Station};
+use crate::audio::sink;
 use crate::errors::RadicoError::*;
-use crate::xml::{CurrentProg, PlaylistUrl, Region, Station};
+use crate::terminal::args::{usage, Options};
+use crate::util::menu::render_config;
 use crate::{debug_println, lazy_regex, terminal};
 use anyhow::{Context, Error, Result};
+use async_recursion::async_recursion;
 use base64::engine::general_purpose;
 use base64::Engine;
 use chrono::{Local, NaiveDateTime};
@@ -10,31 +13,41 @@ use http::{
     header::{InvalidHeaderName, InvalidHeaderValue},
     HeaderName,
 };
-use inquire::{Select, ui::{Attributes, Color, RenderConfig, StyleSheet, Styled}};
+use inquire::{InquireError, Select};
 use itertools::Itertools;
+use mojimoji_rs::zen_to_han;
 use regex::Regex;
-use reqwest::{header::{HeaderMap, HeaderValue}, Client};
+use reqwest::{
+    header::{HeaderMap, HeaderValue},
+    Client, Response,
+};
 use serde_xml_rs::from_str;
+use std::cmp::PartialEq;
+use std::fs::File;
+use std::io::Read;
+use std::str::FromStr;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, LazyLock};
+use std::sync::atomic::Ordering::Relaxed;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;
 use unicode_normalization::UnicodeNormalization;
-use std::str::FromStr;
-use std::sync::LazyLock;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::cmp::PartialEq;
-
+pub mod worker;
+pub mod xml;
 
 pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100";
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Api {
     pub client: Client,
     pub url: Url,
     pub param: Param,
     pub data: Data,
     pub current: State,
+    pub f1: Arc<AtomicBool>,
 }
 
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub struct Url {
     pub domain: String,
     pub station: Option<String>,
@@ -44,12 +57,12 @@ pub struct Url {
     pub play: Vec<Option<String>>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Data {
     pub region: Region,
 }
 
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub struct Param {
     pub key: Option<String>,
     pub stations: Vec<String>,
@@ -57,17 +70,18 @@ pub struct Param {
     pub station: Vec<Option<String>>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Default, Clone)]
 pub struct State {
-    station: Option<Station>,
-    stations: Vec<Station>,
+    pub station: Option<Station>,
+    pub stations: Vec<Station>,
     station_id: Option<String>,
     area_id: Option<String>,
+    area_name: Option<String>,
     plist_url: Option<PlaylistUrl>,
     to: NaiveDateTime,
 }
 
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Kvs {
     pub key: Option<String>,
     pub val: Option<String>,
@@ -79,12 +93,35 @@ impl PartialEq<Station> for &Station {
     }
 }
 
-impl Api {
-    pub fn new(domain: String) -> Self {
+impl Default for Api {
+    fn default() -> Self {
         let mut headers = HeaderMap::new();
         headers.insert("Accept", HeaderValue::from_static("*/*"));
+        let arg = Options::init();
 
-        let client = Client::builder()
+        if arg.show_dev_list {
+            sink::list_host_devices();
+            terminal::quit(Error::from(Quit));
+        }
+
+        let cb = Client::builder();
+        let c = match &arg.cert {
+            None => cb,
+            Some(cert) => {
+                let mut certs = vec![];
+                match File::open(cert) {
+                    Ok(mut p) => { p.read_to_end(&mut certs).unwrap() },
+                    Err(_) => {
+                        println!("certificate error");
+                        terminal::quit(Error::from(Quit));
+                    },
+                };
+
+                cb.add_root_certificate(reqwest::Certificate::from_pem(&certs).unwrap())
+            },
+        };
+
+        let client = c
             .cookie_store(true)
             .default_headers(headers)
             .connection_verbose(true)
@@ -94,16 +131,30 @@ impl Api {
             .build()
             .unwrap();
 
+        let domain = match arg.url {
+            None => {
+                println!("{}", usage());
+                terminal::quit(Error::from(Quit));
+            },
+            Some(d) => d,
+        };
         Api {
             client,
             url: Url {
                 domain,
                 ..Default::default()
             },
-            ..Default::default()
+            param: Default::default(),
+            data: Data {
+                region: Default::default(),
+            },
+            current: Default::default(),
+            f1: Arc::new(Default::default()),
         }
     }
+}
 
+impl Api {
     pub async fn init(&mut self) -> Result<()> {
         self.initializer().await.expect("Initialize Error");
         self.login_check().await.expect("login check error");
@@ -111,10 +162,10 @@ impl Api {
         Ok(())
     }
 
-    async fn initializer(&mut self) -> Result<()> {
+    pub async fn initializer(&mut self) -> Result<()> {
         // top
         let body = self
-            .request(&self.to_owned().url.domain)
+            .request(self.clone().url.domain.as_str())
             .await
             .with_context(|| format!("Failed to url from {}", &self.url.domain))?;
 
@@ -157,7 +208,8 @@ impl Api {
             .unique()
             .map(|(_, [a, b])| (a.to_owned(), b.to_owned()))
             .for_each(|(a, b)| {
-                self.param.headers
+                self.param
+                    .headers
                     .iter_mut()
                     .find(|x| x.key == Some(a.to_owned()))
                     .into_iter()
@@ -165,14 +217,15 @@ impl Api {
             });
 
         self.url.path = REG_PATH
-                .captures_iter(&body)
-                .map(|cap| Some(cap["u"].to_owned()))
-                .collect::<Vec<_>>();
+            .captures_iter(&body)
+            .map(|cap| Some(cap["u"].to_owned()))
+            .collect::<Vec<_>>();
 
         let v = REG_TYPE
             .captures_iter(&body)
             .map(|cap| (Some(cap["a"].to_owned()), Some(cap["b"].to_lowercase())))
-            .collect::<Vec<_>>()[16].to_owned();
+            .collect::<Vec<_>>()[16]
+            .to_owned();
 
         self.param.station = vec![v.1, v.0];
 
@@ -187,25 +240,29 @@ impl Api {
             .to_owned();
         self.param.key = Some(param[1].to_owned());
         self.param.headers[1].val = Some(param[0].to_owned());
-        self.param.headers[4].val = param[0].split("_")
-            .map(|x| x.to_owned()).next();
+        self.param.headers[4].val = param[0].split("_").map(|x| x.to_owned()).next();
 
         let param = QuoteUtil::new(&body)
             .find_all("/station")
             .strip_quote(&EXT_DOUBLE_QUOTE)[0]
             .to_owned();
 
-        let v = param.iter()
-            .flat_map(|x|x.split("/"))
-            .filter(|x|!x.is_empty()).collect::<Vec<_>>();
-        self.url.prog = Some([1,0,3,2].iter().map(|&x|v[x]).join("/"));
+        let v = param
+            .iter()
+            .flat_map(|x| x.split("/"))
+            .filter(|x| !x.is_empty())
+            .collect::<Vec<_>>();
+        self.url.prog = Some([1, 0, 3, 2].iter().map(|&x| v[x]).join("/"));
 
         let param = QuoteUtil::new(&body)
             .find_all("+ '")
             .strip_quote(&EXT_SINGLE_QUOTE)
             .to_owned();
-        let v = param.iter().flat_map(|x|x.to_owned()).collect::<Vec<_>>();
-        self.url.play = [2,3].iter().map(|&x|Some(v[x].to_owned())).collect::<Vec<_>>();
+        let v = param.iter().flat_map(|x| x.to_owned()).collect::<Vec<_>>();
+        self.url.play = [2, 3]
+            .iter()
+            .map(|&x| Some(v[x].to_owned()))
+            .collect::<Vec<_>>();
 
         // current area
         let body = self
@@ -221,12 +278,11 @@ impl Api {
             .request(&format!("{}?_={}", areaid[0][0], unix_epoch()))
             .await?;
 
-        self.current.area_id = Some(
-            QuoteUtil::new(&body)
-                .find_all("doc")
-                .strip_quote(&EXT_DOUBLE_QUOTE)[0][0]
-                .to_owned(),
-        );
+        (self.current.area_id, self.current.area_name) = REG_AREA
+            .captures_iter(&body)
+            .map(|cap| (Some(cap["a"].to_owned()), Some(cap["b"].to_owned())))
+            .collect::<Vec<_>>()[0]
+            .to_owned();
 
         // top-area
         let body = self
@@ -242,26 +298,11 @@ impl Api {
         let body = self
             .request(&format!("{}{}", self.url.domain, channel))
             .await?;
-
-        self.data.region = from_str(&body)?;
+        let conv = zen_to_han(body, true, true, false);
+        self.data.region = from_str(&conv)?;
 
         Ok(())
     }
-
-    // pub async fn select(&mut self) -> Result<()> {
-    //     match self.inquire().await {
-    //         Ok(_) => {}
-    //         Err(e) => return Err(e)
-    //     }
-    //     self.login_check().await?;
-    //     self.playlist_url()
-    //         .await
-    //         .context("failed to get playlist")?;
-    //     self.station_url()
-    //         .await
-    //         .context("failed to get station url")?;
-    //     Ok(())
-    // }
 
     pub async fn next_station(&mut self) -> Result<()> {
         let current = self.to_owned().current.station;
@@ -286,7 +327,6 @@ impl Api {
     }
 
     pub async fn set_station(&mut self) -> Result<()> {
-        // self.current.station = Some(station.name.to_owned());
         let station = self.current.station.to_owned().unwrap();
         self.current.station_id = Some(station.id.to_owned());
         self.current.area_id = Some(station.area_id.to_owned());
@@ -296,47 +336,79 @@ impl Api {
         self.playlist_url().await.expect("failed to get playlist");
         self.station_url().await.expect("failed to get station url");
         self.current_prog().await?;
+        debug_println!(">>>>> set {:?}\r", station);
         Ok(())
     }
 
     pub async fn inquire(&mut self) -> Result<()> {
         inquire::set_global_render_config(render_config());
 
-        let area_id = &self.current.area_id.to_owned().unwrap();
-        println!("{:?}", area_id);
-        let stations = self.to_owned().data.region.stations
+        let area_id = self.current.area_id.as_ref().unwrap();
+        let area_name = self.current.area_name.as_ref().unwrap();
+        println!("{} ({})\r", area_name, area_id);
+        let stations = self
+            .to_owned()
+            .data
+            .region
+            .stations
             .into_iter()
-            .flat_map(|x| {
-                x.station.into_iter()
-                    .collect::<Vec<_>>()
-            })
+            .flat_map(|x| x.station.into_iter().collect::<Vec<_>>())
             .collect::<Vec<_>>();
 
         self.set_stations(&stations).expect("failed to set station");
-        let v = stations.iter().map(|x| x.name.to_owned()).collect::<Vec<_>>();
-
-        let station = match Select::new("station?", v.to_owned()).prompt() {
-            Ok(station) => station,
-            Err(e) => terminal::quit(Error::from(e))
-        };
-        self.param.stations = v;
-        self.current.station = Some(stations
+        let v = stations
             .iter()
-            .find(|x| x.name == station)
-            .ok_or(InquireError)?.to_owned());
+            .map(|x| x.name.to_owned())
+            .collect::<Vec<_>>();
 
-        debug_println!("{:?}\r", station);
+        loop {
+            match Select::new("station?", v.to_owned()).prompt() {
+                Ok(station) => {
+                    self.param.stations = v;
+                    self.current.station = Some(
+                        stations
+                            .iter()
+                            .find(|x| x.name == station)
+                            .ok_or(InquireError)?
+                            .to_owned(),
+                    );
+                    break;
+                },
+                Err(e) => match e {
+                    InquireError::OperationCanceled => return Err(Error::from(Cancel)),
+                    InquireError::OperationInterrupted => {
+                        return Err(Error::from(OperationInterrupted))
+                    },
+                    _ => continue,
+                },
+            };
+        }
 
-        // self.current.station = Some(station.name.to_owned());
-        // self.current.station_id = Some(station.id.to_owned());
-        // self.current.area_id = Some(station.area_id.to_owned());
         self.set_station().await?;
         Ok(())
     }
 
-    #[allow(dead_code)]
-    pub fn get_stations(self) -> Vec<String> {
-        self.param.stations.to_owned()
+    pub async fn select_station(&mut self, station: String) -> Result<()> {
+        self.current.station = Some(
+            self.current
+                .stations
+                .iter()
+                .find(|x| x.name == station)
+                .ok_or(InquireError)?
+                .to_owned(),
+        );
+
+        debug_println!(">>>>> {:?}\r", station);
+        self.set_station().await?;
+        Ok(())
+    }
+
+    pub fn get_stations(&self) -> Vec<String> {
+        self.param.stations.to_vec()
+    }
+
+    pub fn get_current_station(&self) -> Option<String> {
+        Some(self.clone().current.station.unwrap().name)
     }
 
     fn set_stations(&mut self, v: &Vec<Station>) -> Result<()> {
@@ -344,28 +416,30 @@ impl Api {
         Ok(())
     }
 
-    async fn login_check(&self) -> Result<()> {
+    async fn login_check(&mut self) -> Result<()> {
         match &self.url.check {
             None => {},
             Some(check) => {
-                self.client
-                    .get(format!("{}{}", self.url.domain, check))
-                    .send().await?;
+                self.backoff_request(&format!("{}{}", self.url.domain, check), None)
+                    .await?;
             },
         }
         Ok(())
     }
 
     pub async fn playlist_url(&mut self) -> Result<()> {
-        let res = self.client
-            .get(format!(
-                "{}{}{}/{}.xml",
-                self.url.domain,
-                self.url.path[2].to_owned().unwrap(),
-                self.param.headers[1].val.to_owned().unwrap(),
-                self.current.station_id.to_owned().unwrap()
-            ))
-            .send().await?;
+        let res = self
+            .backoff_request(
+                &format!(
+                    "{}{}{}/{}.xml",
+                    self.url.domain,
+                    self.url.path[2].to_owned().unwrap(),
+                    self.param.headers[1].val.to_owned().unwrap(),
+                    self.current.station_id.to_owned().unwrap()
+                ),
+                None,
+            )
+            .await?;
 
         let body = res.text().await?;
         self.current.plist_url = Some(from_str(&body)?);
@@ -373,7 +447,7 @@ impl Api {
         Ok(())
     }
 
-    pub async fn station_url(&mut self) -> Result<()> {
+    async fn get_auth_token(&mut self) -> Result<HeaderMap> {
         let auth_token = self.auth_token().await?;
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -382,7 +456,10 @@ impl Api {
         );
 
         headers.insert(self.key(5)?, auth_token.parse()?);
+        Ok(headers)
+    }
 
+    pub async fn station_url(&mut self) -> Result<()> {
         let hash = gen_hash_key();
 
         let station = self.current.station_id.to_owned().ok_or(StationError)?;
@@ -390,27 +467,31 @@ impl Api {
 
         let v = self.to_owned().url.play;
         let w = self.to_owned().param.station;
-
-        let res = match self.client
-            .get(format!(
-                "{}{}{}{}&{}={}&{}=b",
-                &playlist.url[0].value,
-                v[0].to_owned().unwrap(), station,
-                v[1].to_owned().unwrap(),
-                w[0].to_owned().unwrap(), hash,
-                w[1].to_owned().unwrap()
-            ))
-            .headers(headers)
-            .send().await {
-            Ok(res) => {res}
-            Err(e) => {return Err(Error::from(e))}
+        let header = self.get_auth_token().await?;
+        let res = match self
+            .backoff_request(
+                &format!(
+                    "{}{}{}{}&{}={}&{}=b",
+                    &playlist.url[0].value,
+                    v[0].to_owned().unwrap(),
+                    station,
+                    v[1].to_owned().unwrap(),
+                    w[0].to_owned().unwrap(),
+                    hash,
+                    w[1].to_owned().unwrap()
+                ),
+                Some(header),
+            )
+            .await
+        {
+            Ok(res) => res,
+            Err(e) => return Err(e),
         };
 
         match res.text().await {
             Ok(list) => {
                 if list == "forbidden" {
                     self.url.station = None;
-
                 }
                 self.url.station = list
                     .split("\n")
@@ -424,16 +505,15 @@ impl Api {
         Ok(())
     }
 
-    pub async fn medialist(&self) -> Result<Vec<String>> {
-        match &self.url.station {
+    pub async fn medialist(&mut self) -> Result<Vec<String>> {
+        match self.clone().url.station {
             None => Err(Error::from(Forbidden)),
             Some(url) => {
-                let res = match self.client
-                    .get(url).send()
-                    .await {
+                let res = match self.backoff_request(&url, None).await {
                     Ok(res) => res,
-                    Err(e) => return Err(Error::from(RequestError(e))),
+                    Err(e) => return Err(e),
                 };
+
                 let body = res.text().await.expect("medialist response error");
                 Ok(body
                     .split("\n")
@@ -444,17 +524,73 @@ impl Api {
         }
     }
 
-    pub async fn get_aac(&self, url: &str) -> Result<Vec<u8>> {
-        match self.client.get(url).send().await {
+    pub async fn get_aac(&mut self, url: &str) -> Result<Vec<u8>> {
+        match self.backoff_request(url, None).await {
             Ok(r) => Ok(r.bytes().await?.to_vec()),
-            Err(e) => Err(anyhow::Error::from(RequestError(e))),
+            Err(e) => Err(e),
         }
     }
 
-    async fn request(&self, url: &str) -> Result<String> {
-        let res = self.client.get(url).send().await?;
+    async fn request(&mut self, url: &str) -> Result<String> {
+        let res = self.backoff_request(url, None).await?;
         let body = res.text().await?;
         Ok(body)
+    }
+
+    #[async_recursion]
+    async fn backoff_request(&mut self, url: &str, header: Option<HeaderMap>) -> Result<Response> {
+        let mut count = 0_i8;
+
+        let client = match header {
+            None => self.client.get(url),
+            Some(header) => self.client.get(url).headers(header),
+        };
+
+        loop {
+            let res = match client.try_clone() {
+                None => {
+                    debug_println!("client error\r");
+                    return Err(Error::from(ClientError));
+                },
+                Some(client) => client.send().await,
+            };
+
+            match res {
+                Ok(res) => match res.status().as_u16() {
+                    200..=299 => {
+                        debug_println!("Fetching {} {}\r", res.status(), url);
+                        return Ok(res);
+                    },
+                    403 => {
+                        debug_println!("forbidden {} {}\r", res.status(), url);
+                        return Ok(res);
+                    },
+                    400..=402 | 404..=499 => {
+                        debug_println!("client error {} {}\r", res.status(), url);
+                        return Ok(res);
+                    },
+                    500..=599 => {
+                        debug_println!("server error {} {}\r", res.status(), url);
+                        self.station_url().await?;
+                    },
+                    _ => {
+                        debug_println!("other {} {}\r", res.status(), url);
+                        self.station_url().await?;
+                    },
+                },
+                Err(e) => {
+                    debug_println!("fetch error: {}\r", e);
+                    if count > 1 {
+                        return Err(Error::from(e));
+                    }
+                },
+            };
+            if count > 1 {
+                return Err(Error::from(ClientError));
+            }
+            count += 1;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
     }
 
     async fn auth_token(&mut self) -> Result<String> {
@@ -464,19 +600,29 @@ impl Api {
             headers.insert(self.key(i)?, self.val(i)?);
         }
 
-        let url = format!("{}{}", self.url.domain, &self.url.path[0].to_owned().unwrap());
-        let res = self.client.get(url).headers(headers).send().await?;
+        let url = format!(
+            "{}{}",
+            self.url.domain,
+            &self.url.path[0].to_owned().unwrap()
+        );
 
-        let auth_token = res.headers()
+        let res = self.backoff_request(&url, Some(headers)).await?;
+        let auth_token = res
+            .headers()
             .get(self.key(5).unwrap())
-            .ok_or(AuthError)?.to_str()?;
-        let offset = res.headers()
+            .ok_or(AuthError)?
+            .to_str()?;
+        let offset = res
+            .headers()
             .get(self.key(10)?)
-            .ok_or(AuthError)?.to_str()?
+            .ok_or(AuthError)?
+            .to_str()?
             .parse::<usize>()?;
-        let length = res.headers()
+        let length = res
+            .headers()
             .get(self.key(11)?)
-            .ok_or(AuthError)?.to_str()?
+            .ok_or(AuthError)?
+            .to_str()?
             .parse::<usize>()?;
 
         let key = self.to_owned().param.key.unwrap();
@@ -484,35 +630,48 @@ impl Api {
         self.param.headers[5].val = Some(auth_token.parse()?);
         self.param.headers[6].val = Some(partial_key);
 
-        let url = format!("{}{}", self.url.domain, &self.url.path[1].to_owned().unwrap());
+        let url = format!(
+            "{}{}",
+            self.url.domain,
+            &self.url.path[1].to_owned().unwrap()
+        );
         headers = HeaderMap::new();
         for i in 3..7 {
             headers.insert(self.key(i)?, self.val(i)?);
         }
 
-        self.client.get(url).headers(headers).send().await?;
-
+        self.backoff_request(&url, Some(headers)).await?;
         Ok(auth_token.to_string())
     }
 
     pub async fn current_prog(&mut self) -> Result<()> {
+        if self.f1.load(Relaxed) { return Ok(()) }
         let l = (Local::now() - Duration::from_secs(18000))
-            .format("%Y%m%d").to_string();
+            .format("%Y%m%d")
+            .to_string();
 
-        let res = self.client
-            .get(format!(
-                "{}/{}/{}/{}.xml",
-                self.url.domain,
-                self.to_owned().url.prog.unwrap(),
-                l,
-                &self.current.station_id.to_owned().unwrap()
-            ))
-            .send().await?;
+        let res = self
+            .backoff_request(
+                &format!(
+                    "{}/{}/{}/{}.xml",
+                    self.url.domain,
+                    self.to_owned().url.prog.unwrap(),
+                    l,
+                    &self.current.station_id.to_owned().unwrap()
+                ),
+                None,
+            )
+            .await?;
         let body = res.text().await?;
         let station = &self.to_owned().current.station.unwrap().name;
-        let current: CurrentProg = from_str(&body)?;
-        if let Some(i) = current.stations.station.progs.prog.iter()
-            .rev().find(|x| {
+        let current: CurrentProg = match from_str(&body) {
+            Ok(a) => a,
+            Err(e) => {
+                debug_println!("{:?}", e);
+                return Err(Error::from(e));
+            },
+        };
+        if let Some(i) = current.stations.station.progs.prog.iter().rev().find(|x| {
             NaiveDateTime::parse_from_str(&x.ft, "%Y%m%d%H%M%S").unwrap()
                 < Local::now().naive_local()
         }) {
@@ -540,7 +699,7 @@ impl Api {
         let prog_end = (self.current.to - (local - ave)).num_milliseconds();
         let mut delay = Duration::from_secs(5);
         debug_println!("{:?} {:?} {:?}\r", local, ave, self.current.to);
-        if let 0 ..= 5000 = prog_end {
+        if let 0..=5000 = prog_end {
             delay = Duration::from_millis(prog_end as u64);
         } else if local - ave > self.current.to {
             self.current_prog().await.unwrap();
@@ -567,8 +726,10 @@ fn sleep(elapsed: Duration) -> Duration {
 }
 
 fn strip_html(source: &str) -> String {
-    let result = REG_CONDENSE.replace_all(source, " ")
-        .nfkd().collect::<String>();
+    let result = REG_CONDENSE
+        .replace_all(source, " ")
+        .cjk_compat_variants()
+        .collect::<String>();
     let source = result.replace(r"\n", r"\n\r");
 
     let mut data = String::new();
@@ -587,7 +748,8 @@ fn strip_html(source: &str) -> String {
             data.push(c);
         }
     }
-    data
+    // data
+    zen_to_han(data, true, true, false)
 }
 
 fn gen_hash_key() -> String {
@@ -602,7 +764,6 @@ pub fn unix_epoch() -> u128 {
         .as_millis()
 }
 
-
 lazy_regex!(
     EXT_DOUBLE_QUOTE: r#""(.*?)""#,
     EXT_SINGLE_QUOTE: r#"'(.*?)'"#,
@@ -610,7 +771,8 @@ lazy_regex!(
     REG_X_R:          r#""(?<x_r>(?i)X-R.*?)""#,
     REG_X_VAL:        r#""((?i)X-R[^"]+)":"([^"]+)""#,
     REG_CONDENSE:     r"\s+",
-    REG_TYPE:         r#"(?<a>typ.),"(?<b>.*?)""#
+    REG_TYPE:         r#"(?<a>typ.),"(?<b>.*?)""#,
+    REG_AREA:         r#".*?"(?<a>.*)?">(?<b>.*?)<.*"#
 );
 
 #[derive(Clone, Default)]
@@ -625,7 +787,8 @@ impl<'a> QuoteUtil<'a> {
     }
 
     fn find_all(&mut self, key: &'a str) -> Self {
-        let res = self.txt
+        let res = self
+            .txt
             .split("\n")
             .filter(|&x| x.contains(key))
             .collect::<Vec<_>>();
@@ -646,25 +809,5 @@ impl<'a> QuoteUtil<'a> {
             );
         }
         v
-    }
-}
-
-pub(crate) fn render_config() -> RenderConfig<'static> {
-    RenderConfig {
-        help_message: StyleSheet::new() // help message
-            .with_fg(Color::rgb(150, 150, 140)),
-        prompt_prefix: Styled::new("?") // question prompt
-            .with_fg(Color::rgb(150, 150, 140)),
-        highlighted_option_prefix: Styled::new(">") // cursor
-            .with_fg(Color::rgb(150, 250, 40)),
-        selected_option: Some(
-            StyleSheet::new() // focus
-                .with_fg(Color::rgb(250, 180, 40)),
-        ),
-        answer: StyleSheet::new()
-            .with_attr(Attributes::ITALIC)
-            .with_attr(Attributes::BOLD)
-            .with_fg(Color::rgb(220, 220, 240)),
-        ..Default::default()
     }
 }

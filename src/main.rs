@@ -1,23 +1,18 @@
+use crate::api::worker::Queue;
+
 mod api;
-mod args;
+mod audio;
 mod errors;
-mod macros;
-mod player;
-mod sink;
-mod sleep;
-mod state;
-mod stream;
 mod terminal;
-mod worker;
-mod xml;
+mod util;
 
-use crate::worker::main_thread;
-
-#[tokio::main(flavor = "multi_thread", worker_threads = 1)]
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() {
-    args::init();
     terminal::init();
-    if let Err(e) = main_thread().await {
+
+    let mut m = Queue::default();
+
+    if let Err(e) = m.worker().await {
         terminal::quit(e);
     }
     let _exit = terminal::Quit;

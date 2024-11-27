@@ -1,5 +1,4 @@
 use thiserror::Error;
-
 #[derive(Error, Debug)]
 pub enum RadicoError {
     #[error("fetch AAC error")]
@@ -8,6 +7,8 @@ pub enum RadicoError {
     OperationInterrupted,
     #[error("Station error")]
     StationError,
+    #[error("Client error")]
+    ClientError,
     #[error("Playlist error")]
     PlaylistError,
     #[error("Inquire Error")]
@@ -20,4 +21,6 @@ pub enum RadicoError {
     NegativeTime(i64),
     #[error("Quit")]
     Quit,
+    #[error("Cancel")]
+    Cancel,
 }

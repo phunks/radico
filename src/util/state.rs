@@ -1,7 +1,7 @@
-use std::time::Duration;
-use anyhow::Error;
 use crate::errors::RadicoError::NegativeTime;
 use crate::terminal;
+use anyhow::Error;
+use std::time::Duration;
 
 #[derive(Default)]
 pub struct StateCollector {
@@ -10,7 +10,9 @@ pub struct StateCollector {
 
 impl StateCollector {
     pub fn add(&mut self, a: i64, b: i64) {
-        if b < 0 { terminal::print_wran(Error::from(NegativeTime(b))); }
+        if b < 0 {
+            terminal::print_warn(Error::from(NegativeTime(b)));
+        }
         self.v.rotate_left(1);
         let l = self.v.len() - 1;
         let _ = std::mem::replace(&mut self.v[l], (a, b));
@@ -25,7 +27,8 @@ impl StateCollector {
         let (a, b): (Vec<i64>, Vec<i64>) = self.v.iter().cloned().unzip();
         Duration::from_millis(
             ((a.iter().sum::<i64>() as f64 / 24.8_f64) // 5 sec 31k
-                + (b.iter().sum::<i64>() as f64 / 4_f64) - 5500_f64) as u64, // adjust
+                + (b.iter().sum::<i64>() as f64 / 4_f64)
+                - 5500_f64) as u64, // adjust
         )
     }
 }

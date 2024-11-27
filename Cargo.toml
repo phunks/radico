@@ -1,6 +1,6 @@
 [package]
 name = "radico"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 license = "MIT"
 description = "A command line music player for Internet Radio, written in Rust."
@@ -18,35 +18,35 @@ codegen-units = 1
 
 [dependencies]
 anyhow = { version = "1.0" }
+async-channel = { version = "2.3" }
+async-recursion = { version = "1.1.1" }
 base64 = { version = "0.22" }
+bpaf = { version = "0.9.15",features = ["derive"] }
 bytes = { version = "1.8" }
 chrono = { version = "0.4" }
 chrono-tz = { version = "0.10" }
+colored = { version = "2.1" }
 cpal = { version = "0.15", features = ["asio"] }
+crossterm = { version = "0.28" }
 fdk-aac = { version = "0.7" }
-futures = { version = "0.3" }
-md5 = { version = "0.7" }
-regex = { version = "1.11" }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "rustls-tls", "cookies", "trust-dns", "gzip"] }
-rodio = { version = "0.18" }
-roxmltree = { version = "0.20" }
-tokio = { version = "1.41", features = ["full"] }
-uri = { version = "0.4" }
-url = { version = "2.5" }
 http = { version = "1.1" }
-thiserror = { version = "1.0" }
+include_assets = { version = "1.0.0" }
+inquire = { version = "0.7" }
+itertools = { version = "0.13" }
+md5 = { version = "0.7" }
+mojimoji-rs = { version = "0.1.1" }
+rand = { version = "0.8" }
+redlux = { version = "0.7" }
+regex = { version = "1.11" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "cookies", "trust-dns", "gzip"] }
+rodio = { version = "0.18" }
 serde = { version = "1.0", features = ["derive"] }
 serde-xml-rs = { version = "0.6" }
-inquire = { version = "0.7" }
-crossterm = { version = "0.28" }
-async-channel = { version = "2.3" }
-colored = { version = "2.1" }
-redlux = { version = "0.7" }
-itertools = { version = "0.13" }
-clap = { version = "4.5", features = ["derive"] }
-include_assets = { version = "1.0.0" }
+thiserror = { version = "2.0" }
+tokio = { version = "1.41", features = ["full"] }
 unicode-normalization = { version = "0.1.24" }
-rand = { version = "0.8" }
+uri = { version = "0.4" }
+url = { version = "2.5" }
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2.148" }

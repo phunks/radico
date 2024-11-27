@@ -23,7 +23,7 @@ The program can also play audio using the [ASIO4ALL](https://asio4all.org) drive
 For Raspberry Pi model B v1.2, cross build using arm-unknown-linux-gnueabihf target.
 
 ## TODO
-- [ ] add station menu
+- [x] add station menu
 
 ## Usage
 
@@ -33,9 +33,18 @@ For Raspberry Pi model B v1.2, cross build using arm-unknown-linux-gnueabihf tar
  i                    station info
  n                    next station
  p                    previous station
+ Q                    quit
  Ctrl+C               exit
 
-Usage: radico <URL>
+Usage: radico [-s] [--cert=<cert>] [url]
+
+Available positional items:
+    url                  url
+
+Available options:
+    -s, --show-dev-list  show device list
+        --cert=<cert>    certificate
+    -h, --help           Prints help information
 ```
 ## License
 The source code is licensed MIT. The website content is licensed CC BY 4.0,see LICENSE.

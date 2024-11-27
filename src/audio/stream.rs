@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 #[derive(Clone, Default)]
 pub struct StreamPipe {
-    pub(crate) buffer: Arc<std::sync::Mutex<Vec<u8>>>,
+    pub buffer: Arc<std::sync::Mutex<Vec<u8>>>,
     position: usize,
 }
 
