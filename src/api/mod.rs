@@ -561,13 +561,17 @@ impl Api {
                         debug_println!("Fetching {} {}\r", res.status(), url);
                         return Ok(res);
                     },
+                    400 => {
+                        debug_println!("bad request {} {}\r", res.status(), url);
+                        return Ok(res);
+                    },
                     403 => {
                         debug_println!("forbidden {} {}\r", res.status(), url);
                         return Ok(res);
                     },
-                    400..=402 | 404..=499 => {
+                    401..=499 => {
                         debug_println!("client error {} {}\r", res.status(), url);
-                        return Ok(res);
+                        self.station_url().await?;
                     },
                     500..=599 => {
                         debug_println!("server error {} {}\r", res.status(), url);

@@ -31,6 +31,7 @@ pub struct Queue {
     stat: Arc<Mutex<StateCollector>>,
     s1: Arc<HalfSleep>,
     s2: Arc<HalfSleep>,
+    f1: bool,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -48,7 +49,7 @@ impl Queue {
         self.player.lock().await.buffer_clear();
 
         let mut _delay = Duration::from_secs(5);
-        let s = self.clone();
+        let mut s = self.clone();
         let stat = Arc::clone(&self.stat);
 
         tokio::spawn(async move {
@@ -68,10 +69,16 @@ impl Queue {
 
                                 loop {
                                     buf = match s.api.lock().await.get_aac(&url).await {
-                                        Ok(buf) => buf,
-                                        Err(e) => {
-                                            println!("get_aac error: {:?}", e);
-                                            debug_println!("retry {}", &url);
+                                        Ok(buf) => {
+                                            if s.f1 {
+                                                s.player.lock().await.buffer_clear();
+                                                s.f1 = false;
+                                            }
+                                            buf
+                                        },
+                                        Err(_e) => {
+                                            debug_println!("get_aac error: {:?}\r", _e);
+                                            debug_println!("retry {}\r", &url);
                                             continue;
                                         },
                                     };
@@ -95,11 +102,16 @@ impl Queue {
                         terminal::print_error(Error::from(Forbidden));
                         let url =
                             format!("{}{}", "forbidden", Local::now().format("_%Y%m%d_%H%M%S"));
-                        let p = Playlist {
-                            url,
-                            buf: ASSETS.get(rand()),
-                        };
-                        s.que.lock().await.push_back(p);
+                        let len = s.player.lock().await.buffer_length();
+                        if len < 82920 {
+                            let p = Playlist {
+                                url,
+                                buf: ASSETS.get(rand()),
+                            };
+                            s.que.lock().await.push_back(p);
+                            s.f1 = true;
+                        }
+
                         _delay = Duration::from_secs(30);
                         s.s2.wake();
                     },
