@@ -56,8 +56,9 @@ pub fn asio_kill() {
     let mut sys = System::new_all();
     sys.refresh_all();
     let exec_name = try_get_current_executable_name().unwrap();
+    use log::info;
     for process in sys.processes_by_exact_name(exec_name.as_ref()) {
-        // debug_println!("[{}] {}\r", process.pid(), process.name());
+        info!("[{}] {}\r", process.pid(), process.name());
         if let Some(process) = sys.process(Pid::from(process.pid().as_u32() as usize)) {
             if process.kill_with(Signal::Kill).is_none() {
                 eprintln!("This signal isn't supported on this platform");

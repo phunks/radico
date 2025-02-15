@@ -3,7 +3,7 @@ use crate::audio::sink;
 use crate::errors::RadicoError::*;
 use crate::terminal::args::{usage, Options};
 use crate::util::menu::render_config;
-use crate::{debug_println, lazy_regex, terminal};
+use crate::{lazy_regex, terminal};
 use anyhow::{Context, Error, Result};
 use async_recursion::async_recursion;
 use base64::engine::general_purpose;
@@ -23,6 +23,7 @@ use reqwest::{
 };
 use serde_xml_rs::from_str;
 use std::cmp::PartialEq;
+use std::env;
 use std::fs::File;
 use std::io::Read;
 use std::str::FromStr;
@@ -32,6 +33,8 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;
 use unicode_normalization::UnicodeNormalization;
+use log::{error, info, warn};
+
 pub mod worker;
 pub mod xml;
 
@@ -99,13 +102,27 @@ impl Default for Api {
         headers.insert("Accept", HeaderValue::from_static("*/*"));
         let arg = Options::init();
 
+        let log_env = env::var("RUST_LOG");
+        if log_env.is_err() {
+            let level = match arg.verbose {
+                1 => "radico=INFO",
+                2 => "radico=DEBUG",
+                3 => "radico=TRACE",
+                _ => "",
+            };
+            if !level.is_empty() {
+                env::set_var("RUST_LOG", level);
+                pretty_env_logger::init_timed();
+            }
+        }
+
         if arg.show_dev_list {
             sink::list_host_devices();
             terminal::quit(Error::from(Quit));
         }
 
         let cb = Client::builder();
-        let c = match &arg.cert {
+        let cb = match &arg.cert {
             None => cb,
             Some(cert) => {
                 let mut certs = vec![];
@@ -121,7 +138,15 @@ impl Default for Api {
             },
         };
 
-        let client = c
+        let cb = match arg.proxy {
+            None => cb,
+            Some(socks_addr) => {
+                let socks = reqwest::Proxy::all(socks_addr).unwrap();
+                cb.proxy(socks)
+            }
+        };
+
+        let client = cb
             .cookie_store(true)
             .default_headers(headers)
             .connection_verbose(true)
@@ -331,12 +356,12 @@ impl Api {
         self.current.station_id = Some(station.id.to_owned());
         self.current.area_id = Some(station.area_id.to_owned());
 
-        debug_println!("{:?}\r", station);
+        info!("{:?}\r", station);
 
         self.playlist_url().await.expect("failed to get playlist");
         self.station_url().await.expect("failed to get station url");
         self.current_prog().await?;
-        debug_println!(">>>>> set {:?}\r", station);
+        info!(">>>>> set {:?}\r", station);
         Ok(())
     }
 
@@ -398,7 +423,7 @@ impl Api {
                 .to_owned(),
         );
 
-        debug_println!(">>>>> {:?}\r", station);
+        info!(">>>>> {:?}\r", station);
         self.set_station().await?;
         Ok(())
     }
@@ -549,7 +574,7 @@ impl Api {
         loop {
             let res = match client.try_clone() {
                 None => {
-                    debug_println!("client error\r");
+                    info!("client error\r");
                     return Err(Error::from(ClientError));
                 },
                 Some(client) => client.send().await,
@@ -558,32 +583,32 @@ impl Api {
             match res {
                 Ok(res) => match res.status().as_u16() {
                     200..=299 => {
-                        debug_println!("Fetching {} {}\r", res.status(), url);
+                        info!("Fetching {} {}\r", res.status(), url);
                         return Ok(res);
                     },
                     400 => {
-                        debug_println!("bad request {} {}\r", res.status(), url);
+                        warn!("bad request {} {}\r", res.status(), url);
                         return Ok(res);
                     },
                     403 => {
-                        debug_println!("forbidden {} {}\r", res.status(), url);
+                        error!("forbidden {} {}\r", res.status(), url);
                         return Ok(res);
                     },
                     401..=499 => {
-                        debug_println!("client error {} {}\r", res.status(), url);
+                        error!("client error {} {}\r", res.status(), url);
                         self.station_url().await?;
                     },
                     500..=599 => {
-                        debug_println!("server error {} {}\r", res.status(), url);
+                        error!("server error {} {}\r", res.status(), url);
                         self.station_url().await?;
                     },
                     _ => {
-                        debug_println!("other {} {}\r", res.status(), url);
+                        warn!("other {} {}\r", res.status(), url);
                         self.station_url().await?;
                     },
                 },
                 Err(e) => {
-                    debug_println!("fetch error: {}\r", e);
+                    error!("fetch error: {}\r", e);
                     if count > 1 {
                         return Err(Error::from(e));
                     }
@@ -671,7 +696,7 @@ impl Api {
         let current: CurrentProg = match from_str(&body) {
             Ok(a) => a,
             Err(e) => {
-                debug_println!("{:?}", e);
+                error!("{:?}", e);
                 return Err(Error::from(e));
             },
         };
@@ -702,7 +727,7 @@ impl Api {
 
         let prog_end = (self.current.to - (local - ave)).num_milliseconds();
         let mut delay = Duration::from_secs(5);
-        debug_println!("{:?} {:?} {:?}\r", local, ave, self.current.to);
+        info!("{:?} {:?} {:?}\r", local, ave, self.current.to);
         if let 0..=5000 = prog_end {
             delay = Duration::from_millis(prog_end as u64);
         } else if local - ave > self.current.to {

@@ -5,7 +5,7 @@ use crate::errors::RadicoError::{Forbidden, OperationInterrupted};
 use crate::util::menu;
 use crate::util::sleep::HalfSleep;
 use crate::util::state::StateCollector;
-use crate::{debug_println, lazy_regex, terminal};
+use crate::{lazy_regex, terminal};
 use anyhow::{Error, Result};
 use chrono::{Local, NaiveDateTime};
 use crossterm::event;
@@ -19,6 +19,7 @@ use std::ops::DerefMut;
 use std::sync::{Arc, LazyLock};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
+use log::{error, info, warn};
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 
@@ -77,8 +78,8 @@ impl Queue {
                                             buf
                                         },
                                         Err(_e) => {
-                                            debug_println!("get_aac error: {:?}\r", _e);
-                                            debug_println!("retry {}\r", &url);
+                                            error!("get_aac error: {:?}\r", _e);
+                                            warn!("retry {}\r", &url);
                                             continue;
                                         },
                                     };
@@ -231,7 +232,7 @@ pub async fn player(medialist: Queue) -> Result<()> {
                     .lock()
                     .await
                     .add(blen, (Local::now().naive_local() - ndt).num_milliseconds());
-                debug_println!(
+                info!(
                     "Add {:?} {} {} bytes\r",
                     p.url,
                     len,

@@ -1,8 +1,8 @@
+use log::info;
 use crate::api::worker::rand;
 use crate::audio::assets::ASSETS;
 use crate::audio::sink::MusicStruct;
 use crate::audio::stream::StreamPipe;
-use crate::debug_println;
 use rodio::Sink;
 
 pub struct Player {
@@ -40,7 +40,7 @@ impl Player {
     }
 
     pub fn buffer_clear(&mut self) {
-        debug_println!("buffer clear\r");
+        info!("buffer clear\r");
         self.pipe.clear();
     }
 }
