@@ -1,6 +1,6 @@
 [package]
 name = "radico"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 license = "MIT"
 description = "A command line music player for Internet Radio, written in Rust."
@@ -26,7 +26,7 @@ chrono = { version = "0.4" }
 colored = { version = "2.2" }
 cpal = { version = "0.15", features = ["asio"] }
 crossterm = { version = "0.28" }
-include_assets = { version = "1.0.0" }
+include_assets = { version = "1.0.0", default-features = false, features = ["lz4"] }
 inquire = { version = "0.7" }
 itertools = { version = "0.14" }
 md5 = { version = "0.7" }
@@ -44,6 +44,7 @@ unicode-normalization = { version = "0.1.24" }
 url = { version = "2.5" }
 log = "0.4.22"
 http = "1.2.0"
+
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2.148" }

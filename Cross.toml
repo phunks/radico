@@ -1,10 +1,14 @@
-[target.armv7-unknown-linux-musleabihf]
-dockerfile = "./docker/Dockerfile.armv7-unknown-linux-musleabihf"
-[target.aarch64-unknown-linux-musl]
-dockerfile = "./docker/Dockerfile.aarch64-unknown-linux-musl"
+[target.x86_64-unknown-linux-gnu]
+dockerfile = "./docker/Dockerfile_x86_64-unknown-linux-gnu"
 [target.x86_64-unknown-linux-musl]
-dockerfile = "./docker/Dockerfile.x86_64-unknown-linux-musl"
-[target.armv7-unknown-linux-gnueabihf]
-dockerfile = "./docker/Dockerfile.armv7-unknown-linux-gnueabihf"
+dockerfile = "./docker/Dockerfile_x86_64-unknown-linux-musl"
+[target.aarch64-unknown-linux-gnu]
+dockerfile = "./docker/Dockerfile_aarch64-unknown-linux-gnu"
+[target.aarch64-unknown-linux-musl]
+dockerfile = "./docker/Dockerfile_aarch64-unknown-linux-musl"
+[target.armv7-unknown-linux-gnueabi]
+dockerfile = "./docker/Dockerfile_armv7-unknown-linux-gnueabi"
+[target.armv7-unknown-linux-musleabihf]
+dockerfile = "./docker/Dockerfile_armv7-unknown-linux-musleabihf"
 [target.arm-unknown-linux-gnueabihf]
-dockerfile = "./docker/Dockerfile.arm-unknown-linux-gnueabihf"
+dockerfile = "./docker/Dockerfile_arm-unknown-linux-gnueabihf"

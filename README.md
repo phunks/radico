@@ -22,8 +22,6 @@ The program can also play audio using the [ASIO4ALL](https://asio4all.org) drive
 
 For Raspberry Pi model B v1.2, cross build using arm-unknown-linux-gnueabihf target.
 
-## TODO
-- [x] add station menu
 
 ## Usage
 

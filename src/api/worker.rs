@@ -61,7 +61,14 @@ impl Queue {
                         let instant = Instant::now();
 
                         for url in urls {
-                            let mut stream_date = naive_date_from(&url).unwrap();
+                            // TODO value: input contains invalid characters
+                            let mut stream_date = match naive_date_from(&url) {
+                                Ok(a) => a,
+                                Err(e) => {
+                                    error!("retry: {:?}\r", e);
+                                    naive_date_from(&url).unwrap()
+                                }
+                            };
                             let last_date = s.ndt.lock().unwrap().to_owned();
 
                             if last_date < stream_date {
