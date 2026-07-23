@@ -1,6 +1,6 @@
 [package]
 name = "radico"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 license = "MIT"
 description = "A command line music player for Internet Radio, written in Rust."
@@ -10,11 +10,11 @@ readme = "README.md"
 homepage = "https://github.com/phunks/radico"
 repository = "https://github.com/phunks/radico"
 
-[profile.release]
-debug = false
-strip = "symbols"
-lto = "fat"
-codegen-units = 1
+#[profile.release]
+#debug = false
+#strip = "symbols"
+#lto = "fat"
+#codegen-units = 1
 
 [dependencies]
 anyhow = { version = "1.0" }
@@ -44,7 +44,8 @@ unicode-normalization = { version = "0.1.24" }
 url = { version = "2.5" }
 log = "0.4.22"
 http = "1.2.0"
-
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+tracing-appender = "0.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2.148" }

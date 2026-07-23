@@ -643,13 +643,13 @@ impl Api {
             .to_str()?;
         let offset = res
             .headers()
-            .get(self.key(10)?)
+            .get(self.key(11)?)
             .ok_or(AuthError)?
             .to_str()?
             .parse::<usize>()?;
         let length = res
             .headers()
-            .get(self.key(11)?)
+            .get(self.key(12)?)
             .ok_or(AuthError)?
             .to_str()?
             .parse::<usize>()?;
